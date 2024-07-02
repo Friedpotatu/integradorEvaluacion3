@@ -1,25 +1,38 @@
-﻿// Bodega.cs
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System.Text;
 using System.Linq;
+using System.Text.Json;
+using System.Collections.Generic;
 
 class Bodega
 {
-    private static void ListBooks()
+    // Método para listar libros y enviar la lista a través de RabbitMQ
+    private static void ListBooks(IModel channel, string replyQueueName, string correlationId)
     {
         using (var context = new ContextoLibreria())
         {
+            // Obtener la lista de libros desde la base de datos
             var libros = context.Libros.ToList();
-            foreach (var libro in libros)
-            {
-                Console.WriteLine($"ID: {libro.Id}, Título: {libro.Titulo}, Cantidad: {libro.Cantidad}, Precio: {libro.Precio}");
-            }
+            // Serializar la lista de libros a JSON
+            var response = JsonSerializer.Serialize(libros);
+
+            var responseBytes = Encoding.UTF8.GetBytes(response);
+            var replyProps = channel.CreateBasicProperties();
+            replyProps.CorrelationId = correlationId;
+
+            // Enviar la lista de libros a la cola de respuesta
+            channel.BasicPublish(
+                exchange: "",
+                routingKey: replyQueueName,
+                basicProperties: replyProps,
+                body: responseBytes);
         }
     }
 
+    // Método para agregar un nuevo libro a la base de datos
     private static void AddBook()
     {
         using (var context = new ContextoLibreria())
@@ -42,6 +55,7 @@ class Bodega
         }
     }
 
+    // Método para actualizar la información de un libro existente en la base de datos
     private static void UpdateBook()
     {
         using (var context = new ContextoLibreria())
@@ -63,6 +77,7 @@ class Bodega
         }
     }
 
+    // Método para eliminar un libro de la base de datos
     private static void DeleteBook()
     {
         using (var context = new ContextoLibreria())
@@ -79,6 +94,7 @@ class Bodega
         }
     }
 
+    // Método para recibir y procesar mensajes de RabbitMQ
     private static void ReceiveMessages()
     {
         var factory = new ConnectionFactory() { HostName = "localhost" };
@@ -94,13 +110,16 @@ class Bodega
                 var message = Encoding.UTF8.GetString(body);
                 Console.WriteLine(" [x] Received {0}", message);
 
+                var replyQueueName = ea.BasicProperties.ReplyTo;
+                var correlationId = ea.BasicProperties.CorrelationId;
+
+                // Procesar el mensaje recibido
                 if (message == "listado")
                 {
-                    ListBooks();
+                    ListBooks(channel, replyQueueName, correlationId);
                 }
                 else
                 {
-                    // Assuming message format is "id,cantidad"
                     var parts = message.Split(',');
                     int id = int.Parse(parts[0]);
                     int cantidad = int.Parse(parts[1]);
@@ -123,6 +142,7 @@ class Bodega
         }
     }
 
+    // Método principal que ejecuta la aplicación
     static void Main(string[] args)
     {
         bool running = true;
@@ -140,7 +160,14 @@ class Bodega
             switch (option)
             {
                 case "1":
-                    ListBooks();
+                    using (var context = new ContextoLibreria())
+                    {
+                        var libros = context.Libros.ToList();
+                        foreach (var libro in libros)
+                        {
+                            Console.WriteLine($"ID: {libro.Id}, Título: {libro.Titulo}, Cantidad: {libro.Cantidad}, Precio: {libro.Precio}");
+                        }
+                    }
                     break;
                 case "2":
                     AddBook();
